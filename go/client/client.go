@@ -51,9 +51,7 @@ type Client struct {
     closeOnce sync.Once
     closed    atomic.Bool
 
-    reconnecting         atomic.Bool
-    reconnectInterval    time.Duration
-    maxReconnectInterval time.Duration
+    reconnecting atomic.Bool
 }
 
 
@@ -63,19 +61,16 @@ type Client struct {
 // Notes:
 //   - Transport-level options for one websocket client.
 //   - SessionOption is passed to shared websocket session.
-//   - Reconnect is disabled when ReconnectInterval <= 0.
 //
 // Version:
 //   - 2026-04-22: Added.
 //
 type ClientOption struct {
-    EndpointURL          string
-    HTTPHeader           http.Header
-    ConnectTimeout       time.Duration
-    HandshakeTimeout     time.Duration
-    ReconnectInterval    time.Duration
-    MaxReconnectInterval time.Duration
-    SessionOption        *websocket.SessionOption
+    EndpointURL      string
+    HTTPHeader       http.Header
+    ConnectTimeout   time.Duration
+    HandshakeTimeout time.Duration
+    SessionOption    *websocket.SessionOption
 }
 
 
@@ -110,11 +105,9 @@ func (o *ClientOption) WithHTTPHeader(httpHeader http.Header) *ClientOption {
 //
 func DefaultClientOption() *ClientOption {
     return &ClientOption{
-        ConnectTimeout:       3 * time.Second,
-        HandshakeTimeout:     5 * time.Second,
-        ReconnectInterval:    1 * time.Second,
-        MaxReconnectInterval: 30 * time.Second,
-        SessionOption:        websocket.DefaultSessionOption(),
+        ConnectTimeout:   3 * time.Second,
+        HandshakeTimeout: 5 * time.Second,
+        SessionOption:    websocket.DefaultSessionOption(),
     }
 }
 
@@ -158,12 +151,6 @@ func NewClient(rootCtx context.Context, o *ClientOption, sessionHandler websocke
     if o.HandshakeTimeout <= 0 {
         o.HandshakeTimeout = 5 * time.Second
     }
-    if o.ReconnectInterval <= 0 {
-        o.ReconnectInterval = 1 * time.Second
-    }
-    if o.MaxReconnectInterval < 0 {
-        o.MaxReconnectInterval = 30 * time.Second
-    }
     if o.SessionOption == nil {
         o.SessionOption = websocket.DefaultSessionOption()
     }
@@ -184,8 +171,6 @@ func NewClient(rootCtx context.Context, o *ClientOption, sessionHandler websocke
         sessionHandler:       sessionHandler,
         sessionOption:        o.SessionOption,
         subscriptions:        make(map[string][]byte),
-        reconnectInterval:    o.ReconnectInterval,
-        maxReconnectInterval: o.MaxReconnectInterval,
     }, nil
 }
 
@@ -305,8 +290,10 @@ func (c *Client) Close() error {
 //
 // Notes:
 //   - Lazy-connects on first use.
-//   - Stored payload is copied before save.
-//   - Replaces existing payload for the same key.
+//   - Subscription operations are intentionally serialized using subscriptionsMu.
+//   - Duplicate subscribe requests for the same key are ignored (no-op).
+//   - Payload is copied and stored only after a successful send.
+//   - Stored payload is used for resubscribe tracking.
 //
 // Version:
 //   - 2026-04-22: Added.
@@ -329,11 +316,14 @@ func (c *Client) Subscribe(ctx context.Context, key string, payload []byte) erro
         ctx = context.Background()
     }
 
-    payloadCopy := append([]byte(nil), payload...)
-
     c.subscriptionsMu.Lock()
-    c.subscriptions[key] = payloadCopy
-    c.subscriptionsMu.Unlock()
+    defer c.subscriptionsMu.Unlock()
+
+    if _, exists := c.subscriptions[key]; exists {
+        return nil
+    }
+
+    payloadCopy := append([]byte(nil), payload...)
 
     if err := c.Connect(ctx); err != nil {
         return err
@@ -350,18 +340,24 @@ func (c *Client) Subscribe(ctx context.Context, key string, payload []byte) erro
         return fmt.Errorf("failed to subscribe websocket client: %w", err)
     }
 
+    c.subscriptions[key] = payloadCopy
+
     return nil
 }
 
+
 //
-// Unsubscribe removes one stored subscription and optionally sends a wire payload.
+// Unsubscribe removes one stored subscription and sends an unsubscribe payload.
 //
 // Parameters:
 //   - key: Local subscription identifier to remove.
-//   - payload: Optional unsubscribe payload. Pass nil to remove only local state.
+//   - payload: Raw websocket message to send for unsubscribe.
 //
 // Notes:
-//   - Local state is removed before send.
+//   - Subscription operations are intentionally serialized using subscriptionsMu.
+//   - Duplicate unsubscribe requests for a missing key are ignored (no-op).
+//   - Payload is copied before send.
+//   - Local state is removed only after a successful send.
 //
 // Version:
 //   - 2026-04-22: Added.
@@ -384,11 +380,14 @@ func (c *Client) Unsubscribe(ctx context.Context, key string, payload []byte) er
         ctx = context.Background()
     }
 
-    payloadCopy := append([]byte(nil), payload...)
-
     c.subscriptionsMu.Lock()
-    delete(c.subscriptions, key)
-    c.subscriptionsMu.Unlock()
+    defer c.subscriptionsMu.Unlock()
+
+    if _, exists := c.subscriptions[key]; !exists {
+        return nil
+    }
+
+    payloadCopy := append([]byte(nil), payload...)
 
     if err := c.Connect(ctx); err != nil {
         return err
@@ -404,6 +403,8 @@ func (c *Client) Unsubscribe(ctx context.Context, key string, payload []byte) er
     if err := sess.Send(payloadCopy); err != nil {
         return fmt.Errorf("failed to unsubscribe to websocket: %w", err)
     }
+
+    delete(c.subscriptions, key)
 
     return nil
 }
