@@ -19,3 +19,5 @@ type SessionHandler interface {
 	HandleMessage(*Session, []byte)
 	HandleClose(*Session)
 }
+
+
