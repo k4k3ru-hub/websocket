@@ -1,13 +1,11 @@
 //
 // registry.go
 //
-package server
+package websocket
 
 import (
     "fmt"
     "sync"
-
-    "github.com/k4k3ru-hub/websocket/go"
 )
 
 var (
@@ -16,8 +14,8 @@ var (
 
 type Registry struct {
     mu    sync.RWMutex
-    byKey map[string]map[*websocket.Session]struct{}
-    bySes map[*websocket.Session]map[string]struct{}
+    byKey map[string]map[*Session]struct{}
+    bySes map[*Session]map[string]struct{}
 }
 
 type AddResult struct {
@@ -32,14 +30,15 @@ type RemoveResult struct {
 
 func NewRegistry() *Registry {
     return &Registry{
-        byKey: make(map[string]map[*websocket.Session]struct{}),
-        bySes: make(map[*websocket.Session]map[string]struct{}),
+        byKey: make(map[string]map[*Session]struct{}),
+        bySes: make(map[*Session]map[string]struct{}),
     }
 }
 
 func DefaultRegistry() *Registry {
     return defaultRegistry
 }
+
 
 //
 // Add session to subscription key.
@@ -54,7 +53,7 @@ func DefaultRegistry() *Registry {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) Add(key string, sess *websocket.Session) (*AddResult, error) {
+func (r *Registry) Add(key string, sess *Session) (*AddResult, error) {
     // Guard.
     if r == nil {
         return nil, fmt.Errorf("failed to add session to registry: missing required parameter: receiver=null")
@@ -71,7 +70,7 @@ func (r *Registry) Add(key string, sess *websocket.Session) (*AddResult, error) 
 
     sessions, exists := r.byKey[key]
     if !exists {
-        sessions = make(map[*websocket.Session]struct{})
+        sessions = make(map[*Session]struct{})
         r.byKey[key] = sessions
     }
 
@@ -109,7 +108,7 @@ func (r *Registry) Add(key string, sess *websocket.Session) (*AddResult, error) 
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) Remove(key string, sess *websocket.Session) (*RemoveResult, error) {
+func (r *Registry) Remove(key string, sess *Session) (*RemoveResult, error) {
     // Guard.
     if r == nil {
         return nil, fmt.Errorf("failed to remove session from registry: missing required parameter: receiver=null")
@@ -164,7 +163,7 @@ func (r *Registry) Remove(key string, sess *websocket.Session) (*RemoveResult, e
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) GetSessions(key string) []*websocket.Session {
+func (r *Registry) GetSessions(key string) []*Session {
     // Guard.
     if r == nil || key == "" {
         return nil
@@ -178,7 +177,7 @@ func (r *Registry) GetSessions(key string) []*websocket.Session {
         return nil
     }
 
-    out := make([]*websocket.Session, 0, len(sessions))
+    out := make([]*Session, 0, len(sessions))
     for sess := range sessions {
         out = append(out, sess)
     }
@@ -192,7 +191,7 @@ func (r *Registry) GetSessions(key string) []*websocket.Session {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) GetKeys(sess *websocket.Session) []string {
+func (r *Registry) GetKeys(sess *Session) []string {
     // Guard.
     if r == nil || sess == nil {
         return nil
@@ -226,7 +225,7 @@ func (r *Registry) GetKeys(sess *websocket.Session) []string {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) RemoveSession(sess *websocket.Session) []string {
+func (r *Registry) RemoveSession(sess *Session) []string {
     // Guard.
     if r == nil || sess == nil {
         return nil
@@ -275,6 +274,7 @@ func (r *Registry) LenKeys() int {
 
     return len(r.byKey)
 }
+
 
 //
 // LenSessions returns the number of active sessions tracked by reverse index.

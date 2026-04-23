@@ -1,7 +1,7 @@
 //
 // client.go
 //
-package client
+package websocket
 
 import (
     "context"
@@ -11,8 +11,6 @@ import (
     "sync"
     "sync/atomic"
     "time"
-
-    "github.com/k4k3ru-hub/websocket/go"
 
     gorillaWebsocket "github.com/gorilla/websocket"
 )
@@ -39,9 +37,9 @@ type Client struct {
     dialer      *gorillaWebsocket.Dialer
 
     sessionMu      sync.RWMutex
-    session        *websocket.Session
-    sessionOption  *websocket.SessionOption
-    sessionHandler websocket.SessionHandler
+    session        *Session
+    sessionOption  *SessionOption
+    sessionHandler SessionHandler
 
     connectMu sync.Mutex
 
@@ -70,7 +68,7 @@ type ClientOption struct {
     HTTPHeader       http.Header
     ConnectTimeout   time.Duration
     HandshakeTimeout time.Duration
-    SessionOption    *websocket.SessionOption
+    SessionOption    *SessionOption
 }
 
 
@@ -107,7 +105,7 @@ func DefaultClientOption() *ClientOption {
     return &ClientOption{
         ConnectTimeout:   3 * time.Second,
         HandshakeTimeout: 5 * time.Second,
-        SessionOption:    websocket.DefaultSessionOption(),
+        SessionOption:    DefaultSessionOption(),
     }
 }
 
@@ -126,22 +124,22 @@ func DefaultClientOption() *ClientOption {
 // Version:
 //   - 2026-04-22: Added.
 //
-func NewClient(rootCtx context.Context, o *ClientOption, sessionHandler websocket.SessionHandler) (*Client, error) {
+func NewClient(rootCtx context.Context, endpointURL string, h SessionHandler, o *ClientOption) (*Client, error) {
     // Guard.
     if rootCtx == nil {
         rootCtx = context.Background()
     }
+    if endpointURL == "" {
+        return nil, fmt.Errorf("failed to create websocket client: missing required parameter: endpoint_url=empty")
+    }
+    if h == nil {
+        return nil, fmt.Errorf("failed to create websocket client: missing required parameter: session_handler=nil")
+    }
     if o == nil {
         o = DefaultClientOption()
     }
-    if sessionHandler == nil {
-        return nil, fmt.Errorf("failed to create websocket client: missing required parameter: session_handler=nil")
-    }
 
     // Normalize the client option.
-    if o.EndpointURL == "" {
-        return nil, fmt.Errorf("failed to create websocket client: missing required parameter: endpoint_url=empty")
-    }
     if o.HTTPHeader == nil {
         o.HTTPHeader = make(http.Header)
     }
@@ -152,7 +150,7 @@ func NewClient(rootCtx context.Context, o *ClientOption, sessionHandler websocke
         o.HandshakeTimeout = 5 * time.Second
     }
     if o.SessionOption == nil {
-        o.SessionOption = websocket.DefaultSessionOption()
+        o.SessionOption = DefaultSessionOption()
     }
 
     // Create new dialer.
@@ -164,13 +162,13 @@ func NewClient(rootCtx context.Context, o *ClientOption, sessionHandler websocke
     }
 
     return &Client{
-        rootCtx:              rootCtx,
-        endpointURL:          o.EndpointURL,
-        httpHeader:           o.HTTPHeader,
-        dialer:               dialer,
-        sessionHandler:       sessionHandler,
-        sessionOption:        o.SessionOption,
-        subscriptions:        make(map[string][]byte),
+        rootCtx:        rootCtx,
+        endpointURL:    endpointURL,
+        httpHeader:     o.HTTPHeader,
+        dialer:         dialer,
+        sessionHandler: h,
+        sessionOption:  o.SessionOption,
+        subscriptions:  make(map[string][]byte),
     }, nil
 }
 
@@ -217,7 +215,7 @@ func (c *Client) Connect(ctx context.Context) error {
     }
 
     // Create new session.
-    sess, err := websocket.NewSession(conn, c.sessionHandler, c.sessionOption)
+    sess, err := NewSession(conn, c.sessionHandler, c.sessionOption)
     if err != nil {
         _ = conn.Close()
         return fmt.Errorf("failed to connect websocket: %w", err)

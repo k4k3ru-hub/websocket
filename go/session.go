@@ -53,6 +53,7 @@ type SessionOption struct {
     PingPayload     []byte
 }
 
+
 //
 // DefaultSessionOption.
 //
@@ -419,4 +420,38 @@ func (s *Session) runWriteLoop() {
             }
         }
     }
+}
+
+
+//
+// Clone returns a deep-copied session option.
+//
+// Notes:
+//   - Value fields are copied as-is.
+//   - PingPayload is copied to avoid sharing the backing array.
+//
+// Version:
+//   - 2026-04-23: Added.
+//
+func (o *SessionOption) Clone() *SessionOption {
+    // Guard.
+    if o == nil {
+        return nil
+    }
+
+    out := &SessionOption{
+        WriteWait:       o.WriteWait,
+        PongWait:        o.PongWait,
+        PingPeriod:      o.PingPeriod,
+        InitialReadWait: o.InitialReadWait,
+        MaxMessageSize:  o.MaxMessageSize,
+        SendQueueSize:   o.SendQueueSize,
+        PingMessageType: o.PingMessageType,
+    }
+
+    if len(o.PingPayload) > 0 {
+        out.PingPayload = append([]byte(nil), o.PingPayload...)
+    }
+
+    return out
 }
