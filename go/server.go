@@ -117,36 +117,36 @@ func NewServer(rootCtx context.Context, h SessionHandler, o *ServerOption) (*Ser
 // Version:
 //   - 2026-04-23: Added.
 //
-func (s *Server) StartSession(w http.ResponseWriter, r *http.Request) (*Session, error) {
+func (s *Server) StartSession(w http.ResponseWriter, r *http.Request) error {
     // Guard.
     if s == nil {
-        return nil, fmt.Errorf("failed to start websocket server: missing required parameter: receiver=null")
+        return fmt.Errorf("failed to start websocket server: missing required parameter: receiver=null")
     }
     if w == nil {
-        return nil, fmt.Errorf("failed to start websocket server: missing required parameter: response_writer=null")
+        return fmt.Errorf("failed to start websocket server: missing required parameter: response_writer=null")
     }
     if r == nil {
-        return nil, fmt.Errorf("failed to start websocket server: missing required parameter: request=null")
+        return fmt.Errorf("failed to start websocket server: missing required parameter: request=null")
     }
 
     // Upgrade the connection to the websocket.
     conn, err := s.upgrader.Upgrade(w, r, nil)
     if err != nil {
-        return nil, fmt.Errorf("failed to start websocket server: %w", err)
+        return fmt.Errorf("failed to start websocket server: %w", err)
     }
 
     // Create new session.
     sess, err := NewSession(conn, s.sessionHandler, s.sessionOption)
     if err != nil {
         _ = conn.Close()
-        return nil, fmt.Errorf("failed to start websocket server: %w", err)
+        return fmt.Errorf("failed to start websocket server: %w", err)
     }
 
     // Start websocket session.
     if err := sess.Start(s.rootCtx); err != nil {
         _ = conn.Close()
-        return nil, fmt.Errorf("failed to start websocket server: %w", err)
+        return fmt.Errorf("failed to start websocket server: %w", err)
     }
 
-    return sess, nil
+    return nil
 }
