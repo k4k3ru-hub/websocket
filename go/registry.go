@@ -14,8 +14,8 @@ var (
 
 type Registry struct {
     mu    sync.RWMutex
-    byKey map[string]map[*Session]struct{}
-    bySes map[*Session]map[string]struct{}
+    byKey map[string]map[*SessionContext]struct{}
+    bySes map[*SessionContext]map[string]struct{}
 }
 
 type AddResult struct {
@@ -30,8 +30,8 @@ type RemoveResult struct {
 
 func NewRegistry() *Registry {
     return &Registry{
-        byKey: make(map[string]map[*Session]struct{}),
-        bySes: make(map[*Session]map[string]struct{}),
+        byKey: make(map[string]map[*SessionContext]struct{}),
+        bySes: make(map[*SessionContext]map[string]struct{}),
     }
 }
 
@@ -53,7 +53,7 @@ func DefaultRegistry() *Registry {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) Add(key string, sess *Session) (*AddResult, error) {
+func (r *Registry) Add(key string, sess *SessionContext) (*AddResult, error) {
     // Guard.
     if r == nil {
         return nil, fmt.Errorf("failed to add session to registry: missing required parameter: receiver=null")
@@ -70,7 +70,7 @@ func (r *Registry) Add(key string, sess *Session) (*AddResult, error) {
 
     sessions, exists := r.byKey[key]
     if !exists {
-        sessions = make(map[*Session]struct{})
+        sessions = make(map[*SessionContext]struct{})
         r.byKey[key] = sessions
     }
 
@@ -108,7 +108,7 @@ func (r *Registry) Add(key string, sess *Session) (*AddResult, error) {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) Remove(key string, sess *Session) (*RemoveResult, error) {
+func (r *Registry) Remove(key string, sess *SessionContext) (*RemoveResult, error) {
     // Guard.
     if r == nil {
         return nil, fmt.Errorf("failed to remove session from registry: missing required parameter: receiver=null")
@@ -163,7 +163,7 @@ func (r *Registry) Remove(key string, sess *Session) (*RemoveResult, error) {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) GetSessions(key string) []*Session {
+func (r *Registry) GetSessions(key string) []*SessionContext {
     // Guard.
     if r == nil || key == "" {
         return nil
@@ -177,7 +177,7 @@ func (r *Registry) GetSessions(key string) []*Session {
         return nil
     }
 
-    out := make([]*Session, 0, len(sessions))
+    out := make([]*SessionContext, 0, len(sessions))
     for sess := range sessions {
         out = append(out, sess)
     }
@@ -191,7 +191,7 @@ func (r *Registry) GetSessions(key string) []*Session {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) GetKeys(sess *Session) []string {
+func (r *Registry) GetKeys(sess *SessionContext) []string {
     // Guard.
     if r == nil || sess == nil {
         return nil
@@ -225,7 +225,7 @@ func (r *Registry) GetKeys(sess *Session) []string {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) RemoveSession(sess *Session) []string {
+func (r *Registry) RemoveSession(sess *SessionContext) []string {
     // Guard.
     if r == nil || sess == nil {
         return nil
