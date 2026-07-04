@@ -63,16 +63,105 @@ func NewRegistry() *Registry {
 //   - 2026-07-04: Added.
 //
 func NewBridgeBindingRegistry() *BridgeBindingRegistry {
-	return &BridgeBindingRegistry{
-		byKey:                 make(map[string]map[uint64]struct{}),
-		byUpstreamSessionID:   make(map[uint64]map[string]struct{}),
-		byDownstreamSessionID: make(map[uint64]map[string]struct{}),
-	}
+    return &BridgeBindingRegistry{
+        byKey:                 make(map[string]map[uint64]struct{}),
+        byUpstreamSessionID:   make(map[uint64]map[string]struct{}),
+        byDownstreamSessionID: make(map[uint64]map[string]struct{}),
+    }
 }
 
 
 func DefaultRegistry() *Registry {
     return defaultRegistry
+}
+
+
+//
+// Register session context by session ID.
+//
+// Notes:
+//   - This method is idempotent for the same session ID.
+//   - If the same session ID is registered again, the session context is replaced.
+//
+// Version:
+//   - 2026-07-04: Added.
+//
+func (r *Registry) Register(sess SessionContext) error {
+    // Guard.
+    if r == nil {
+        return fmt.Errorf("failed to register session to registry: missing required parameter: registry=null")
+    }
+    if sess == nil {
+        return fmt.Errorf("failed to register session to registry: missing required parameter: session=null")
+    }
+
+    sessionID := sess.ID()
+    if sessionID == 0 {
+        return fmt.Errorf("failed to register session to registry: missing required parameter: session_id=0")
+    }
+
+    r.mu.Lock()
+    defer r.mu.Unlock()
+
+    r.byID[sessionID] = sess
+
+    return nil
+}
+
+
+//
+// Bind registered session ID to subscription key.
+//
+// Notes:
+//   - This method is idempotent for the same key and session ID pair.
+//   - The session ID must already be registered by Register.
+//
+// Return:
+//   - Added=true if the session ID was newly added to the key.
+//   - First=true if the key had no sessions before this Bind.
+//
+// Version:
+//   - 2026-07-04: Added.
+//
+func (r *Registry) Bind(key string, sessionID uint64) (*AddResult, error) {
+    // Guard.
+    if r == nil {
+        return nil, fmt.Errorf("failed to bind session to registry: missing required parameter: receiver=null")
+    }
+    if key == "" {
+        return nil, fmt.Errorf("failed to bind session to registry: missing required parameter: key=empty")
+    }
+    if sessionID == 0 {
+        return nil, fmt.Errorf("failed to bind session to registry: missing required parameter: session_id=0")
+    }
+
+    r.mu.Lock()
+    defer r.mu.Unlock()
+
+    if _, exists := r.byID[sessionID]; !exists {
+        return nil, fmt.Errorf("failed to bind session to registry: missing required parameter: session_id=%d not registered", sessionID)
+    }
+
+    sessionIDs, exists := r.byKey[key]
+    if !exists {
+        sessionIDs = make(map[uint64]struct{})
+        r.byKey[key] = sessionIDs
+    }
+
+    if _, exists := sessionIDs[sessionID]; exists {
+        return &AddResult{
+            Added: false,
+            First: false,
+        }, nil
+    }
+
+    first := len(sessionIDs) == 0
+    sessionIDs[sessionID] = struct{}{}
+
+    return &AddResult{
+        Added: true,
+        First: first,
+    }, nil
 }
 
 
@@ -92,53 +181,22 @@ func DefaultRegistry() *Registry {
 func (r *Registry) Add(key string, sess SessionContext) (*AddResult, error) {
     // Guard.
     if r == nil {
-        return nil, fmt.Errorf("failed to add session to registry: missing required parameter: registry=null")
-    }
-    if key == "" {
-        return nil, fmt.Errorf("failed to add session to registry: missing required parameter: key=empty")
+        return nil, fmt.Errorf("failed to register and bind session: missing required parameter: registry=null")
     }
     if sess == nil {
-        return nil, fmt.Errorf("failed to add session to registry: missing required parameter: session=null")
+        return nil, fmt.Errorf("failed to register and bind session: missing required parameter: session=null")
     }
 
-    sessionID := sess.ID()
-    if sessionID == 0 {
-        return nil, fmt.Errorf("failed to add session to registry: missing required parameter: session_id=0")
+    if err := r.Register(sess); err != nil {
+        return nil, fmt.Errorf("failed to register and bind session: %w", err)
     }
 
-    r.mu.Lock()
-    defer r.mu.Unlock()
+    result, err := r.Bind(key, sess.ID())
+    if err != nil {
+        return nil, fmt.Errorf("failed to register and bind session: %w", err)
+    }
 
-    if r.byID == nil {
-		r.byID = make(map[uint64]SessionContext)
-	}
-	if r.byKey == nil {
-		r.byKey = make(map[string]map[uint64]struct{})
-	}
-
-    r.byID[sessionID] = sess
-
-    sessionIDs := r.byKey[key]
-	first := len(sessionIDs) == 0
-
-    if sessionIDs == nil {
-		sessionIDs = make(map[uint64]struct{})
-		r.byKey[key] = sessionIDs
-	}
-
-	if _, exists := sessionIDs[sessionID]; exists {
-		return &AddResult{
-			Added: false,
-			First: false,
-		}, nil
-	}
-
-	sessionIDs[sessionID] = struct{}{}
-
-	return &AddResult{
-		Added: true,
-		First: first,
-	}, nil
+    return result, nil
 }
 
 
@@ -238,12 +296,12 @@ func (r *Registry) GetSessionIDs(key string) []uint64 {
 //   - 2026-07-04: Changed registry index from session context to session ID.
 //
 func (r *Registry) RemoveSession(sess SessionContext) []string {
-	// Guard.
-	if r == nil || sess == nil {
-		return nil
-	}
+    // Guard.
+    if r == nil || sess == nil {
+        return nil
+    }
 
-	return r.RemoveSessionByID(sess.ID())
+    return r.RemoveSessionByID(sess.ID())
 }
 
 
@@ -331,27 +389,27 @@ func (r *Registry) LenSessions() int {
 //   - 2026-07-04: Added.
 //
 func (r *BridgeBindingRegistry) Bind(key string, downstreamSessionID uint64, upstreamSessionID uint64) {
-	if r == nil || key == "" || downstreamSessionID == 0 || upstreamSessionID == 0 {
-		return
-	}
+    if r == nil || key == "" || downstreamSessionID == 0 || upstreamSessionID == 0 {
+        return
+    }
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+    r.mu.Lock()
+    defer r.mu.Unlock()
 
-	if r.byKey[key] == nil {
-		r.byKey[key] = make(map[uint64]struct{})
-	}
-	r.byKey[key][downstreamSessionID] = struct{}{}
+    if r.byKey[key] == nil {
+        r.byKey[key] = make(map[uint64]struct{})
+    }
+    r.byKey[key][downstreamSessionID] = struct{}{}
 
-	if r.byUpstreamSessionID[upstreamSessionID] == nil {
-		r.byUpstreamSessionID[upstreamSessionID] = make(map[string]struct{})
-	}
-	r.byUpstreamSessionID[upstreamSessionID][key] = struct{}{}
+    if r.byUpstreamSessionID[upstreamSessionID] == nil {
+        r.byUpstreamSessionID[upstreamSessionID] = make(map[string]struct{})
+    }
+    r.byUpstreamSessionID[upstreamSessionID][key] = struct{}{}
 
-	if r.byDownstreamSessionID[downstreamSessionID] == nil {
-		r.byDownstreamSessionID[downstreamSessionID] = make(map[string]struct{})
-	}
-	r.byDownstreamSessionID[downstreamSessionID][key] = struct{}{}
+    if r.byDownstreamSessionID[downstreamSessionID] == nil {
+        r.byDownstreamSessionID[downstreamSessionID] = make(map[string]struct{})
+    }
+    r.byDownstreamSessionID[downstreamSessionID][key] = struct{}{}
 }
 
 
@@ -362,24 +420,24 @@ func (r *BridgeBindingRegistry) Bind(key string, downstreamSessionID uint64, ups
 //   - 2026-07-04: Added.
 //
 func (r *BridgeBindingRegistry) FindDownstreamSessionIDsByKey(key string) []uint64 {
-	if r == nil || key == "" {
-		return nil
-	}
+    if r == nil || key == "" {
+        return nil
+    }
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+    r.mu.RLock()
+    defer r.mu.RUnlock()
 
-	items := r.byKey[key]
-	if len(items) == 0 {
-		return nil
-	}
+    items := r.byKey[key]
+    if len(items) == 0 {
+        return nil
+    }
 
-	result := make([]uint64, 0, len(items))
-	for downstreamSessionID := range items {
-		result = append(result, downstreamSessionID)
-	}
+    result := make([]uint64, 0, len(items))
+    for downstreamSessionID := range items {
+        result = append(result, downstreamSessionID)
+    }
 
-	return result
+    return result
 }
 
 //
@@ -389,24 +447,24 @@ func (r *BridgeBindingRegistry) FindDownstreamSessionIDsByKey(key string) []uint
 //   - 2026-07-04: Added.
 //
 func (r *BridgeBindingRegistry) FindKeysByUpstreamSessionID(upstreamSessionID uint64) []string {
-	if r == nil || upstreamSessionID == 0 {
-		return nil
-	}
+    if r == nil || upstreamSessionID == 0 {
+        return nil
+    }
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+    r.mu.RLock()
+    defer r.mu.RUnlock()
 
-	items := r.byUpstreamSessionID[upstreamSessionID]
-	if len(items) == 0 {
-		return nil
-	}
+    items := r.byUpstreamSessionID[upstreamSessionID]
+    if len(items) == 0 {
+        return nil
+    }
 
-	result := make([]string, 0, len(items))
-	for key := range items {
-		result = append(result, key)
-	}
+    result := make([]string, 0, len(items))
+    for key := range items {
+        result = append(result, key)
+    }
 
-	return result
+    return result
 }
 
 //
@@ -416,24 +474,24 @@ func (r *BridgeBindingRegistry) FindKeysByUpstreamSessionID(upstreamSessionID ui
 //   - 2026-07-04: Added.
 //
 func (r *BridgeBindingRegistry) FindKeysByDownstreamSessionID(downstreamSessionID uint64) []string {
-	if r == nil || downstreamSessionID == 0 {
-		return nil
-	}
+    if r == nil || downstreamSessionID == 0 {
+        return nil
+    }
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+    r.mu.RLock()
+    defer r.mu.RUnlock()
 
-	items := r.byDownstreamSessionID[downstreamSessionID]
-	if len(items) == 0 {
-		return nil
-	}
+    items := r.byDownstreamSessionID[downstreamSessionID]
+    if len(items) == 0 {
+        return nil
+    }
 
-	result := make([]string, 0, len(items))
-	for key := range items {
-		result = append(result, key)
-	}
+    result := make([]string, 0, len(items))
+    for key := range items {
+        result = append(result, key)
+    }
 
-	return result
+    return result
 }
 
 //
@@ -443,25 +501,25 @@ func (r *BridgeBindingRegistry) FindKeysByDownstreamSessionID(downstreamSessionI
 //   - 2026-07-04: Added.
 //
 func (r *BridgeBindingRegistry) Unbind(key string, downstreamSessionID uint64, upstreamSessionID uint64) {
-	if r == nil || key == "" || downstreamSessionID == 0 || upstreamSessionID == 0 {
-		return
-	}
+    if r == nil || key == "" || downstreamSessionID == 0 || upstreamSessionID == 0 {
+        return
+    }
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+    r.mu.Lock()
+    defer r.mu.Unlock()
 
-	delete(r.byKey[key], downstreamSessionID)
-	if len(r.byKey[key]) == 0 {
-		delete(r.byKey, key)
-	}
+    delete(r.byKey[key], downstreamSessionID)
+    if len(r.byKey[key]) == 0 {
+        delete(r.byKey, key)
+    }
 
-	delete(r.byUpstreamSessionID[upstreamSessionID], key)
-	if len(r.byUpstreamSessionID[upstreamSessionID]) == 0 {
-		delete(r.byUpstreamSessionID, upstreamSessionID)
-	}
+    delete(r.byUpstreamSessionID[upstreamSessionID], key)
+    if len(r.byUpstreamSessionID[upstreamSessionID]) == 0 {
+        delete(r.byUpstreamSessionID, upstreamSessionID)
+    }
 
-	delete(r.byDownstreamSessionID[downstreamSessionID], key)
-	if len(r.byDownstreamSessionID[downstreamSessionID]) == 0 {
-		delete(r.byDownstreamSessionID, downstreamSessionID)
-	}
+    delete(r.byDownstreamSessionID[downstreamSessionID], key)
+    if len(r.byDownstreamSessionID[downstreamSessionID]) == 0 {
+        delete(r.byDownstreamSessionID, downstreamSessionID)
+    }
 }
