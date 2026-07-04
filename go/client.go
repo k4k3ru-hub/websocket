@@ -280,6 +280,29 @@ func (c *Client) Close() error {
 
 
 //
+// Get session ID.
+//
+// Version:
+//   - 2026-07-04: Added.
+//
+func (c *Client) SessionID() uint64 {
+    // Guard.
+    if c == nil {
+        return 0
+    }
+
+    c.sessionMu.RLock()
+    sess := c.session
+    c.sessionMu.RUnlock()
+    if sess == nil {
+        return 0
+    }
+
+    return sess.ID()
+}
+
+
+//
 // Subscribe registers one subscription payload and sends it.
 //
 // Parameters:

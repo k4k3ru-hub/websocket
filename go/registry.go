@@ -14,6 +14,7 @@ var (
 
 type Registry struct {
     mu    sync.RWMutex
+
     byKey map[string]map[SessionContext]struct{}
     bySes map[SessionContext]map[string]struct{}
 }

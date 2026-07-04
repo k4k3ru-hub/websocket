@@ -28,6 +28,8 @@ var (
     ErrSessionClosed   = errors.New("websocket session is closed")
     ErrSendQueueFull   = errors.New("websocket send queue is full")
     ErrSessionNotReady = errors.New("websocket session is not ready")
+
+    nextSessionID atomic.Uint64
 )
 
 //
@@ -88,6 +90,8 @@ func DefaultSessionOption() *SessionOption {
 //   - 2026-04-22: Added.
 //
 type Session struct {
+    id uint64
+
     conn           *gorillaWebsocket.Conn
     handler        SessionHandler
 //    cleanupHandler SessionCleanupHandler
@@ -127,6 +131,7 @@ func NewSession(conn *gorillaWebsocket.Conn, handler SessionHandler, o *SessionO
     normalized := normalizeSessionOption(o)
 
     return &Session{
+        id:              newSessionID(),
         conn:            conn,
         handler:         handler,
         sendCh:          make(chan []byte, normalized.SendQueueSize),
@@ -172,6 +177,23 @@ func normalizeSessionOption(o *SessionOption) *SessionOption {
 
     return &out
 }
+
+
+//
+// Get session ID.
+//
+// Version:
+//   - 2026-07-04: Added.
+//
+func (s *Session) ID() uint64 {
+    // Guard.
+    if s == nil {
+        return 0
+    }
+
+    return s.id
+}
+
 
 //
 // Start websocket session.
@@ -454,4 +476,14 @@ func (o *SessionOption) Clone() *SessionOption {
     }
 
     return out
+}
+
+
+func newSessionID() uint64 {
+	for {
+		id := nextSessionID.Add(1)
+		if id != 0 {
+			return id
+		}
+	}
 }

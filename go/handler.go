@@ -15,6 +15,7 @@ package websocket
 //   - 2026-04-24: Added.
 //
 type SessionContext interface {
+    ID() uint64
     Close()
     Send(message []byte) error
     SendJSON(v any) error
