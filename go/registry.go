@@ -41,11 +41,6 @@ type AddResult struct {
     First bool
 }
 
-type RemoveResult struct {
-    Removed bool
-    Empty   bool
-}
-
 
 //
 // Create new registry.
@@ -114,28 +109,36 @@ func (r *Registry) Add(key string, sess SessionContext) (*AddResult, error) {
     r.mu.Lock()
     defer r.mu.Unlock()
 
-    sessionIDs, exists := r.byKey[key]
-    if !exists {
-        sessionIDs = make(map[uint64]struct{})
-        r.byKey[key] = sessionIDs
-    }
+    if r.byID == nil {
+		r.byID = make(map[uint64]SessionContext)
+	}
+	if r.byKey == nil {
+		r.byKey = make(map[string]map[uint64]struct{})
+	}
 
-    if _, exists := sessionIDs[sessionID]; exists {
-        r.byID[sessionID] = sess
-        return &AddResult{
-            Added: false,
-            First: false,
-        }, nil
-    }
-
-    first := len(sessionIDs) == 0
-    sessionIDs[sessionID] = struct{}{}
     r.byID[sessionID] = sess
 
-    return &AddResult{
-        Added: true,
-        First: first,
-    }, nil
+    sessionIDs := r.byKey[key]
+	first := len(sessionIDs) == 0
+
+    if sessionIDs == nil {
+		sessionIDs = make(map[uint64]struct{})
+		r.byKey[key] = sessionIDs
+	}
+
+	if _, exists := sessionIDs[sessionID]; exists {
+		return &AddResult{
+			Added: false,
+			First: false,
+		}, nil
+	}
+
+	sessionIDs[sessionID] = struct{}{}
+
+	return &AddResult{
+		Added: true,
+		First: first,
+	}, nil
 }
 
 
