@@ -178,7 +178,7 @@ func (r *Registry) Bind(key string, sessionID uint64) (*AddResult, error) {
 // Version:
 //   - 2026-04-22: Added.
 //
-func (r *Registry) Add(key string, sess SessionContext) (*AddResult, error) {
+func (r *Registry) RegisterAndBind(key string, sess SessionContext) (*AddResult, error) {
     // Guard.
     if r == nil {
         return nil, fmt.Errorf("failed to register and bind session: missing required parameter: registry=null")
