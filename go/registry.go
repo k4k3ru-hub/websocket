@@ -16,11 +16,13 @@ var (
 // Parameter:
 //   - byKey: key -> session IDs
 //   - byID: session ID -> session context
+//   - keysByID: session ID -> keys
 //
 type Registry struct {
-    mu    sync.RWMutex
-    byKey map[string]map[uint64]struct{}
-    byID  map[uint64]SessionContext
+    mu       sync.RWMutex
+    byKey    map[string]map[uint64]struct{}
+    keysByID map[uint64]map[string]struct{}
+    byID     map[uint64]SessionContext
 }
 
 //
@@ -50,8 +52,9 @@ type AddResult struct {
 //
 func NewRegistry() *Registry {
     return &Registry{
-        byKey: make(map[string]map[uint64]struct{}),
-        byID:  make(map[uint64]SessionContext),
+        byKey:    make(map[string]map[uint64]struct{}),
+        keysByID: make(map[uint64]map[string]struct{}),
+        byID:     make(map[uint64]SessionContext),
     }
 }
 
@@ -158,6 +161,11 @@ func (r *Registry) Bind(key string, sessionID uint64) (*AddResult, error) {
     first := len(sessionIDs) == 0
     sessionIDs[sessionID] = struct{}{}
 
+    if r.keysByID[sessionID] == nil {
+        r.keysByID[sessionID] = make(map[string]struct{})
+    }
+    r.keysByID[sessionID][key] = struct{}{}
+
     return &AddResult{
         Added: true,
         First: first,
@@ -166,7 +174,7 @@ func (r *Registry) Bind(key string, sessionID uint64) (*AddResult, error) {
 
 
 //
-// Add session to subscription key.
+// Register and bind session.
 //
 // Notes:
 //   - This method is idempotent for the same key and session pair.
@@ -326,13 +334,24 @@ func (r *Registry) RemoveSessionByID(sessionID uint64) []string {
     r.mu.Lock()
     defer r.mu.Unlock()
 
+    keys := r.keysByID[sessionID]
+    if len(keys) == 0 {
+        delete(r.byID, sessionID)
+        delete(r.keysByID, sessionID)
+        return nil
+    }
+
     emptyKeys := make([]string, 0)
-    for key, sessionIDs := range r.byKey {
-        if _, exists := sessionIDs[sessionID]; !exists {
+
+    for key := range keys {
+        sessionIDs := r.byKey[key]
+        if len(sessionIDs) == 0 {
+            delete(r.byKey, key)
             continue
         }
 
         delete(sessionIDs, sessionID)
+
         if len(sessionIDs) == 0 {
             delete(r.byKey, key)
             emptyKeys = append(emptyKeys, key)
@@ -340,6 +359,7 @@ func (r *Registry) RemoveSessionByID(sessionID uint64) []string {
     }
 
     delete(r.byID, sessionID)
+    delete(r.keysByID, sessionID)
 
     return emptyKeys
 }
