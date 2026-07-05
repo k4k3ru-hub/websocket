@@ -370,7 +370,7 @@ func (r *Registry) RemoveSessionByID(sessionID uint64) []string {
         return nil
     }
 
-    emptyKeys := make([]string, 0)
+    removedKeys := make([]string, 0)
 
     for key := range keys {
         sessionIDs := r.byKey[key]
@@ -383,14 +383,14 @@ func (r *Registry) RemoveSessionByID(sessionID uint64) []string {
 
         if len(sessionIDs) == 0 {
             delete(r.byKey, key)
-            emptyKeys = append(emptyKeys, key)
+            removedKeys = append(removedKeys, key)
         }
     }
 
     delete(r.byID, sessionID)
     delete(r.keysByID, sessionID)
 
-    return emptyKeys
+    return removedKeys
 }
 
 

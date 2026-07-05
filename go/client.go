@@ -280,25 +280,30 @@ func (c *Client) Close() error {
 
 
 //
-// Get session ID.
+// Get session context.
 //
 // Version:
 //   - 2026-07-04: Added.
 //
-func (c *Client) SessionID() uint64 {
+func (c *Client) SessionContext() (SessionContext, error) {
     // Guard.
     if c == nil {
-        return 0
+        return nil, fmt.Errorf("failed to get session context: missing required parameter: client=null")
+    }
+
+    // Lazy connect.
+    if err := c.Connect(context.Background()); err != nil {
+        return nil, fmt.Errorf("failed to get session context: %w", err)
     }
 
     c.sessionMu.RLock()
     sess := c.session
     c.sessionMu.RUnlock()
     if sess == nil {
-        return 0
+        return nil, fmt.Errorf("failed to get session context: missing required parameter: session=null")
     }
 
-    return sess.ID()
+    return sess, nil
 }
 
 
