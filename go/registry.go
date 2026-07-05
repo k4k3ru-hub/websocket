@@ -209,6 +209,35 @@ func (r *Registry) RegisterAndBind(key string, sess SessionContext) (*AddResult,
 
 
 //
+// GetKeys returns a snapshot of keys bound to the session ID.
+//
+// Version:
+//   - 2026-07-05: Added.
+//
+func (r *Registry) GetKeys(sessionID uint64) []string {
+    // Guard.
+    if r == nil || sessionID == 0 {
+        return nil
+    }
+
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+
+    keys := r.keysByID[sessionID]
+    if len(keys) == 0 {
+        return nil
+    }
+
+    out := make([]string, 0, len(keys))
+    for key := range keys {
+        out = append(out, key)
+    }
+
+    return out
+}
+
+
+//
 // Get session by session ID.
 //
 // Version:
