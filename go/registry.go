@@ -43,6 +43,11 @@ type AddResult struct {
     First bool
 }
 
+type RemoveResult struct {
+    Removed bool
+    Last    bool
+}
+
 
 //
 // Create new registry.
@@ -393,6 +398,62 @@ func (r *Registry) RemoveSessionByID(sessionID uint64) []string {
     return removedKeys
 }
 
+
+//
+// RemoveSessionByKeyAndID removes the session ID binding from the specified key.
+//
+// Notes:
+//   - Only the specified key and session ID pair is removed.
+//   - If the session ID has no remaining keys, the session context is also
+//     removed from the registry.
+//   - This method is idempotent for the same key and session ID pair.
+//
+// Return:
+//   - Removed=true if the key and session ID binding existed and was removed.
+//   - Last=true if the key has no remaining sessions after removal.
+//
+// Version:
+//   - 2026-07-11: Added.
+//
+func (r *Registry) RemoveSessionByKeyAndID(key string, sessionID uint64) *RemoveResult {
+    // Guard.
+    if r == nil || key == "" || sessionID == 0 {
+        return &RemoveResult{}
+    }
+
+    r.mu.Lock()
+    defer r.mu.Unlock()
+
+    result := &RemoveResult{}
+
+    // Remove the session ID from the key index.
+    sessionIDs := r.byKey[key]
+    if sessionIDs != nil {
+        if _, exists := sessionIDs[sessionID]; exists {
+            delete(sessionIDs, sessionID)
+            result.Removed = true
+        }
+
+        if len(sessionIDs) == 0 {
+            delete(r.byKey, key)
+            result.Last = result.Removed
+        }
+    }
+
+    // Remove the key from the reverse index.
+    keys := r.keysByID[sessionID]
+    if keys != nil {
+        delete(keys, key)
+
+        // Remove the session itself when it has no remaining bindings.
+        if len(keys) == 0 {
+            delete(r.keysByID, sessionID)
+            delete(r.byID, sessionID)
+        }
+    }
+
+    return result
+}
 
 
 //
