@@ -132,19 +132,11 @@ func (r *Registry) Bind(key string, sessionID uint64) (*BindResult, error) {
         return nil, fmt.Errorf("failed to bind session to registry: missing required parameter: session_id=%d not registered", sessionID)
     }
 
-    sessionIDs, exists := r.byKey[key]
-    if !exists {
+    sessionIDs := r.byKey[key]
+    if sessionIDs == nil {
         sessionIDs = make(map[uint64]struct{})
         r.byKey[key] = sessionIDs
     }
-
-    if _, exists := sessionIDs[sessionID]; exists {
-        return &BindResult{}, nil
-    }
-
-    first := len(sessionIDs) == 0
-
-    sessionIDs[sessionID] = struct{}{}
 
     keys := r.keysByID[sessionID]
     if keys == nil {
@@ -152,6 +144,16 @@ func (r *Registry) Bind(key string, sessionID uint64) (*BindResult, error) {
         r.keysByID[sessionID] = keys
     }
 
+    if _, exists := sessionIDs[sessionID]; exists {
+        // Repair the reverse index if it is missing or incomplete.
+        keys[key] = struct{}{}
+
+        return &BindResult{}, nil
+    }
+
+    first := len(sessionIDs) == 0
+
+    sessionIDs[sessionID] = struct{}{}
     keys[key] = struct{}{}
 
     return &BindResult{
@@ -220,17 +222,17 @@ func (r *Registry) GetKeys(sessionID uint64) []string {
     defer r.mu.RUnlock()
 
     keys := r.keysByID[sessionID]
-	if len(keys) == 0 {
-		return nil
-	}
+    if len(keys) == 0 {
+        return nil
+    }
 
-	result := make([]string, 0, len(keys))
+    result := make([]string, 0, len(keys))
 
-	for key := range keys {
-		result = append(result, key)
-	}
+    for key := range keys {
+        result = append(result, key)
+    }
 
-	return result
+    return result
 }
 
 
@@ -364,19 +366,16 @@ func (r *Registry) UnregisterByID(sessionID uint64) []string {
     r.mu.Lock()
     defer r.mu.Unlock()
 
-    keys := r.keysByID[sessionID]
-    if len(keys) == 0 {
-        delete(r.keysByID, sessionID)
-        delete(r.byID, sessionID)
-
-        return nil
-    }
-
     emptyKeys := make([]string, 0)
 
-    for key := range keys {
-        sessionIDs := r.byKey[key]
+    // Scan the forward index instead of relying only on keysByID.
+    // This also repairs stale bindings if the reverse index is incomplete.
+    for key, sessionIDs := range r.byKey {
         if sessionIDs == nil {
+            continue
+        }
+
+        if _, exists := sessionIDs[sessionID]; !exists {
             continue
         }
 
@@ -426,26 +425,21 @@ func (r *Registry) Unbind(key string, sessionID uint64) *UnbindResult {
 
     result := &UnbindResult{}
 
-    sessionIDs := r.byKey[key]
-    if sessionIDs == nil {
-        return result
+    // Remove from the forward index.
+    if sessionIDs := r.byKey[key]; sessionIDs != nil {
+        if _, exists := sessionIDs[sessionID]; exists {
+            delete(sessionIDs, sessionID)
+            result.Unbound = true
+
+            if len(sessionIDs) == 0 {
+                delete(r.byKey, key)
+                result.KeyBecameEmpty = true
+            }
+        }
     }
 
-    if _, exists := sessionIDs[sessionID]; !exists {
-        return result
-    }
-
-    delete(sessionIDs, sessionID)
-
-    result.Unbound = true
-
-    if len(sessionIDs) == 0 {
-        delete(r.byKey, key)
-        result.KeyBecameEmpty = true
-    }
-
-    keys := r.keysByID[sessionID]
-    if keys != nil {
+    // Remove from the reverse index independently.
+    if keys := r.keysByID[sessionID]; keys != nil {
         delete(keys, key)
 
         if len(keys) == 0 {
