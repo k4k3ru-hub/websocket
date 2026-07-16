@@ -5,6 +5,7 @@ package websocket
 
 import (
     "context"
+    "errors"
     "fmt"
     "net"
     "net/http"
@@ -363,6 +364,13 @@ func (c *Client) Subscribe(ctx context.Context, key string, payload []byte) erro
     }
 
     if err := sess.Send(payloadCopy); err != nil {
+        // Clear session if it has already closed.
+        if errors.Is(err, ErrSessionClosed) {
+            c.sessionMu.Lock()
+            c.session = nil
+            c.sessionMu.Unlock()
+        }
+
         return fmt.Errorf("failed to subscribe websocket client: %w", err)
     }
 
@@ -427,6 +435,13 @@ func (c *Client) Unsubscribe(ctx context.Context, key string, payload []byte) er
     }
 
     if err := sess.Send(payloadCopy); err != nil {
+        // Clear session if it has already closed.
+        if errors.Is(err, ErrSessionClosed) {
+            c.sessionMu.Lock()
+            c.session = nil
+            c.sessionMu.Unlock()
+        }
+
         return fmt.Errorf("failed to unsubscribe to websocket: %w", err)
     }
 
@@ -474,6 +489,13 @@ func (c *Client) SendRaw(ctx context.Context, payload []byte) error {
     }
 
     if err := sess.Send(payloadCopy); err != nil {
+        // Clear session if it has already closed.
+        if errors.Is(err, ErrSessionClosed) {
+            c.sessionMu.Lock()
+            c.session = nil
+            c.sessionMu.Unlock()
+        }
+
         return fmt.Errorf("failed to send message to websocket: %w", err)
     }
 
@@ -541,6 +563,13 @@ func (c *Client) ResubscribeAll(ctx context.Context) error {
         }
 
         if err := sess.Send(payloadCopy); err != nil {
+            // Clear session if it has already closed.
+            if errors.Is(err, ErrSessionClosed) {
+                c.sessionMu.Lock()
+                c.session = nil
+                c.sessionMu.Unlock()
+            }
+
             return fmt.Errorf("failed to resubscribe to websocket: %w", err)
         }
     }
