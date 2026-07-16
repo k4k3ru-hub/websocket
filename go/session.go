@@ -479,6 +479,20 @@ func (o *SessionOption) Clone() *SessionOption {
 }
 
 
+func (s *Session) IsConnected() bool {
+    if s == nil || s.conn == nil || !s.started.Load() {
+        return false
+    }
+
+    select {
+    case <-s.doneCh:
+        return false
+    default:
+        return true
+    }
+}
+
+
 func newSessionID() uint64 {
 	for {
 		id := nextSessionID.Add(1)

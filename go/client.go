@@ -203,11 +203,23 @@ func (c *Client) Connect(ctx context.Context) error {
 
     // Already has been opened the session.
     c.sessionMu.RLock()
-    if c.session != nil {
-        c.sessionMu.RUnlock()
+    currentSession := c.session
+    c.sessionMu.RUnlock()
+
+    if currentSession != nil && currentSession.IsConnected() {
         return nil
     }
-    c.sessionMu.RUnlock()
+
+    // Remove the disconnected session.
+    if currentSession != nil {
+        c.sessionMu.Lock()
+        if c.session == currentSession {
+            c.session = nil
+        }
+        c.sessionMu.Unlock()
+
+        currentSession.Close()
+    }
 
     // Connect websocket. 
     conn, _, err := c.dialer.DialContext(ctx, c.endpointURL, c.httpHeader)
