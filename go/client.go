@@ -242,10 +242,6 @@ func (c *Client) Connect(ctx context.Context) error {
 
     // Replace the session if the session has already been opened just in case, 
     c.sessionMu.Lock()
-    if c.session != nil {
-        sess.Close()
-        return nil
-    }
     c.session = sess
     c.sessionMu.Unlock()
 
