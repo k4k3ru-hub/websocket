@@ -1,10 +1,6 @@
-//
 // handler.go
-//
 package websocket
 
-
-//
 // SessionContext.
 //
 // Notes:
@@ -13,16 +9,13 @@ package websocket
 //
 // Version:
 //   - 2026-04-24: Added.
-//
 type SessionContext interface {
-    ID() uint64
-    Close()
-    Send(message []byte) error
-    SendJSON(v any) error
+	ID() uint64
+	Close()
+	Send(message []byte) error
+	SendJSON(v any) error
 }
 
-
-//
 // SessionHandler.
 //
 // Notes:
@@ -33,11 +26,7 @@ type SessionContext interface {
 //
 // Version:
 //   - 2026-04-22: Added.
-//
 type SessionHandler interface {
 	HandleMessage(SessionContext, []byte)
 	HandleClose(SessionContext)
 }
-
-
-
