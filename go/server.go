@@ -31,11 +31,19 @@ type ServerOption struct {
 	SessionOption     *SessionOption
 }
 
-// Create default server option.
+// DefaultServerOption creates the default server option.
+//
+// Notes:
+//   - Sessions must receive their first non-empty text or binary message within
+//     DefaultInitialMessageReadWaitTimeout or they are closed automatically.
 //
 // Version:
+//   - 2026-08-13: Enabled the default initial message read timeout.
 //   - 2026-04-22: Added.
 func DefaultServerOption() *ServerOption {
+	sessionOption := DefaultSessionOption()
+	sessionOption.InitialMessageReadWaitTimeout = DefaultInitialMessageReadWaitTimeout
+
 	return &ServerOption{
 		HandshakeTimeout: 5 * time.Second,
 		ReadBufferSize:   4096,
@@ -43,7 +51,7 @@ func DefaultServerOption() *ServerOption {
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
-		SessionOption: DefaultSessionOption(),
+		SessionOption: sessionOption,
 	}
 }
 

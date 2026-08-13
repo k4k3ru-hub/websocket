@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	DefaultWriteWait       = 10 * time.Second
-	DefaultPongWait        = 70 * time.Second
-	DefaultPingPeriod      = 25 * time.Second
-	DefaultInitialReadWait = DefaultPongWait
-	DefaultMaxMessageSize  = 256 * 1024 // 256 KiB
-	DefaultSendQueueSize   = 256
+	DefaultWriteWait                     = 10 * time.Second
+	DefaultPongWait                      = 70 * time.Second
+	DefaultPingPeriod                    = 25 * time.Second
+	DefaultInitialReadWait               = DefaultPongWait
+	DefaultInitialMessageReadWaitTimeout = 5 * time.Second
+	DefaultMaxMessageSize                = 256 * 1024 // 256 KiB
+	DefaultSendQueueSize                 = 256
 )
 
 var (
@@ -37,18 +38,22 @@ var (
 //   - PingMessageType defaults to websocket.PingMessage.
 //   - For application-level ping, set PingMessageType=websocket.TextMessage
 //     and provide PingPayload.
+//   - InitialMessageReadWaitTimeout limits how long a session waits for its
+//     first non-empty text or binary message. A zero value disables the timeout.
 //
 // Version:
+//   - 2026-08-13: Added InitialMessageReadWaitTimeout.
 //   - 2026-04-22: Added.
 type SessionOption struct {
-	WriteWait       time.Duration
-	PongWait        time.Duration
-	PingPeriod      time.Duration
-	InitialReadWait time.Duration
-	MaxMessageSize  int64
-	SendQueueSize   int
-	PingMessageType int
-	PingPayload     []byte
+	WriteWait                     time.Duration
+	PongWait                      time.Duration
+	PingPeriod                    time.Duration
+	InitialReadWait               time.Duration
+	InitialMessageReadWaitTimeout time.Duration
+	MaxMessageSize                int64
+	SendQueueSize                 int
+	PingMessageType               int
+	PingPayload                   []byte
 }
 
 // DefaultSessionOption.
@@ -57,14 +62,15 @@ type SessionOption struct {
 //   - 2026-04-22: Added.
 func DefaultSessionOption() *SessionOption {
 	return &SessionOption{
-		WriteWait:       DefaultWriteWait,
-		PongWait:        DefaultPongWait,
-		PingPeriod:      DefaultPingPeriod,
-		InitialReadWait: DefaultInitialReadWait,
-		MaxMessageSize:  DefaultMaxMessageSize,
-		SendQueueSize:   DefaultSendQueueSize,
-		PingMessageType: gorillaWebsocket.PingMessage,
-		PingPayload:     nil,
+		WriteWait:                     DefaultWriteWait,
+		PongWait:                      DefaultPongWait,
+		PingPeriod:                    DefaultPingPeriod,
+		InitialReadWait:               DefaultInitialReadWait,
+		InitialMessageReadWaitTimeout: 0,
+		MaxMessageSize:                DefaultMaxMessageSize,
+		SendQueueSize:                 DefaultSendQueueSize,
+		PingMessageType:               gorillaWebsocket.PingMessage,
+		PingPayload:                   nil,
 	}
 }
 
@@ -86,18 +92,21 @@ type Session struct {
 	handler SessionHandler
 	//    cleanupHandler SessionCleanupHandler
 
-	sendCh    chan []byte
-	doneCh    chan struct{}
-	closeOnce sync.Once
-	started   atomic.Bool
+	sendCh                 chan []byte
+	doneCh                 chan struct{}
+	initialMessageReadCh   chan struct{}
+	closeOnce              sync.Once
+	initialMessageReadOnce sync.Once
+	started                atomic.Bool
 
-	writeWait       time.Duration
-	pongWait        time.Duration
-	pingPeriod      time.Duration
-	initialReadWait time.Duration
-	maxMessageSize  int64
-	pingMessageType int
-	pingPayload     []byte
+	writeWait                     time.Duration
+	pongWait                      time.Duration
+	pingPeriod                    time.Duration
+	initialReadWait               time.Duration
+	initialMessageReadWaitTimeout time.Duration
+	maxMessageSize                int64
+	pingMessageType               int
+	pingPayload                   []byte
 }
 
 // NewSession.
@@ -119,18 +128,20 @@ func NewSession(conn *gorillaWebsocket.Conn, handler SessionHandler, o *SessionO
 	normalized := normalizeSessionOption(o)
 
 	return &Session{
-		id:              newSessionID(),
-		conn:            conn,
-		handler:         handler,
-		sendCh:          make(chan []byte, normalized.SendQueueSize),
-		doneCh:          make(chan struct{}),
-		writeWait:       normalized.WriteWait,
-		pongWait:        normalized.PongWait,
-		pingPeriod:      normalized.PingPeriod,
-		initialReadWait: normalized.InitialReadWait,
-		maxMessageSize:  normalized.MaxMessageSize,
-		pingMessageType: normalized.PingMessageType,
-		pingPayload:     append([]byte(nil), normalized.PingPayload...),
+		id:                            newSessionID(),
+		conn:                          conn,
+		handler:                       handler,
+		sendCh:                        make(chan []byte, normalized.SendQueueSize),
+		doneCh:                        make(chan struct{}),
+		initialMessageReadCh:          make(chan struct{}),
+		writeWait:                     normalized.WriteWait,
+		pongWait:                      normalized.PongWait,
+		pingPeriod:                    normalized.PingPeriod,
+		initialReadWait:               normalized.InitialReadWait,
+		initialMessageReadWaitTimeout: normalized.InitialMessageReadWaitTimeout,
+		maxMessageSize:                normalized.MaxMessageSize,
+		pingMessageType:               normalized.PingMessageType,
+		pingPayload:                   append([]byte(nil), normalized.PingPayload...),
 	}, nil
 }
 
@@ -185,8 +196,11 @@ func (s *Session) ID() uint64 {
 //   - Safe to call only once for one Session instance.
 //   - Starts read/write loops bound to the existing connection.
 //   - Automatically closes the session when ctx is done.
+//   - When InitialMessageReadWaitTimeout is enabled, automatically closes the
+//     session unless a non-empty text or binary message arrives in time.
 //
 // Version:
+//   - 2026-08-13: Added initial message read timeout handling.
 //   - 2026-04-22: Added.
 func (s *Session) Start(ctx context.Context) error {
 	// Guard.
@@ -214,9 +228,16 @@ func (s *Session) Start(ctx context.Context) error {
 	})
 
 	go func() {
-		<-ctx.Done()
-		s.Close()
+		select {
+		case <-ctx.Done():
+			s.Close()
+		case <-s.doneCh:
+		}
 	}()
+
+	if s.initialMessageReadWaitTimeout > 0 {
+		go s.runInitialMessageReadWaitTimeout()
+	}
 
 	go s.runWriteLoop()
 	go s.runReadLoop()
@@ -335,21 +356,6 @@ func (s *Session) IsStarted() bool {
 	return s.started.Load()
 }
 
-// Conn returns the underlying websocket connection.
-//
-// Notes:
-//   - Exposed only when upper layers need direct control.
-//
-// Version:
-//   - 2026-04-22: Added.
-func (s *Session) Conn() *gorillaWebsocket.Conn {
-	if s == nil {
-		return nil
-	}
-
-	return s.conn
-}
-
 func (s *Session) runReadLoop() {
 	// Guard.
 	if s == nil || s.conn == nil {
@@ -359,13 +365,18 @@ func (s *Session) runReadLoop() {
 	defer s.Close()
 
 	for {
-		_, msg, err := s.conn.ReadMessage()
+		messageType, msg, err := s.conn.ReadMessage()
 		if err != nil {
 			return
 		}
 		if len(msg) == 0 {
 			continue
 		}
+		if messageType != gorillaWebsocket.TextMessage && messageType != gorillaWebsocket.BinaryMessage {
+			continue
+		}
+
+		s.markInitialMessageRead()
 
 		s.handler.HandleMessage(s, msg)
 	}
@@ -414,6 +425,24 @@ func (s *Session) runWriteLoop() {
 	}
 }
 
+func (s *Session) runInitialMessageReadWaitTimeout() {
+	timer := time.NewTimer(s.initialMessageReadWaitTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-s.initialMessageReadCh:
+	case <-s.doneCh:
+	case <-timer.C:
+		s.Close()
+	}
+}
+
+func (s *Session) markInitialMessageRead() {
+	s.initialMessageReadOnce.Do(func() {
+		close(s.initialMessageReadCh)
+	})
+}
+
 // Clone returns a deep-copied session option.
 //
 // Notes:
@@ -429,13 +458,14 @@ func (o *SessionOption) Clone() *SessionOption {
 	}
 
 	out := &SessionOption{
-		WriteWait:       o.WriteWait,
-		PongWait:        o.PongWait,
-		PingPeriod:      o.PingPeriod,
-		InitialReadWait: o.InitialReadWait,
-		MaxMessageSize:  o.MaxMessageSize,
-		SendQueueSize:   o.SendQueueSize,
-		PingMessageType: o.PingMessageType,
+		WriteWait:                     o.WriteWait,
+		PongWait:                      o.PongWait,
+		PingPeriod:                    o.PingPeriod,
+		InitialReadWait:               o.InitialReadWait,
+		InitialMessageReadWaitTimeout: o.InitialMessageReadWaitTimeout,
+		MaxMessageSize:                o.MaxMessageSize,
+		SendQueueSize:                 o.SendQueueSize,
+		PingMessageType:               o.PingMessageType,
 	}
 
 	if len(o.PingPayload) > 0 {

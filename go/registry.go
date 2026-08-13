@@ -362,8 +362,9 @@ func (r *Registry) UnregisterByID(sessionID uint64) []string {
 //
 // Notes:
 //   - Only the specified key and session ID pair is removed.
-//   - If the session ID has no remaining keys, the session context is also
-//     removed from the registry.
+//   - The registered session context remains in the registry even when the
+//     session ID has no remaining key bindings.
+//   - Use Unregister or UnregisterByID to remove the session context.
 //   - This method is idempotent for the same key and session ID pair.
 //
 // Return:
@@ -371,6 +372,7 @@ func (r *Registry) UnregisterByID(sessionID uint64) []string {
 //   - Last=true if the key has no remaining sessions after removal.
 //
 // Version:
+//   - 2026-08-13: Clarified session registration lifecycle.
 //   - 2026-07-11: Added.
 func (r *Registry) Unbind(key string, sessionID uint64) *UnbindResult {
 	// Guard.
