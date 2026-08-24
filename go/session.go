@@ -2,6 +2,7 @@
 package websocket
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,11 +38,13 @@ var (
 //   - Transport-only option set for one websocket connection.
 //   - PingMessageType defaults to websocket.PingMessage.
 //   - For application-level ping, set PingMessageType=websocket.TextMessage
-//     and provide PingPayload.
+//     and provide PingPayload and PongPayload. A matching pong refreshes the
+//     read deadline and is not delivered to SessionHandler.
 //   - InitialMessageReadWaitTimeout limits how long a session waits for its
 //     first non-empty text or binary message. A zero value disables the timeout.
 //
 // Version:
+//   - 2026-08-24: Added application-level pong handling.
 //   - 2026-08-13: Added InitialMessageReadWaitTimeout.
 //   - 2026-04-22: Added.
 type SessionOption struct {
@@ -54,6 +57,7 @@ type SessionOption struct {
 	SendQueueSize                 int
 	PingMessageType               int
 	PingPayload                   []byte
+	PongPayload                   []byte
 }
 
 // DefaultSessionOption.
@@ -71,6 +75,7 @@ func DefaultSessionOption() *SessionOption {
 		SendQueueSize:                 DefaultSendQueueSize,
 		PingMessageType:               gorillaWebsocket.PingMessage,
 		PingPayload:                   nil,
+		PongPayload:                   nil,
 	}
 }
 
@@ -107,6 +112,7 @@ type Session struct {
 	maxMessageSize                int64
 	pingMessageType               int
 	pingPayload                   []byte
+	pongPayload                   []byte
 }
 
 // NewSession.
@@ -142,6 +148,7 @@ func NewSession(conn *gorillaWebsocket.Conn, handler SessionHandler, o *SessionO
 		maxMessageSize:                normalized.MaxMessageSize,
 		pingMessageType:               normalized.PingMessageType,
 		pingPayload:                   append([]byte(nil), normalized.PingPayload...),
+		pongPayload:                   append([]byte(nil), normalized.PongPayload...),
 	}, nil
 }
 
@@ -375,11 +382,27 @@ func (s *Session) runReadLoop() {
 		if messageType != gorillaWebsocket.TextMessage && messageType != gorillaWebsocket.BinaryMessage {
 			continue
 		}
+		if s.isApplicationPong(messageType, msg) {
+			if err := s.conn.SetReadDeadline(time.Now().Add(s.pongWait)); err != nil {
+				return
+			}
+			continue
+		}
 
 		s.markInitialMessageRead()
 
 		s.handler.HandleMessage(s, msg)
 	}
+}
+
+func (s *Session) isApplicationPong(messageType int, message []byte) bool {
+	if s == nil || len(s.pongPayload) == 0 || messageType != s.pingMessageType {
+		return false
+	}
+	if messageType != gorillaWebsocket.TextMessage && messageType != gorillaWebsocket.BinaryMessage {
+		return false
+	}
+	return bytes.Equal(message, s.pongPayload)
 }
 
 func (s *Session) runWriteLoop() {
@@ -447,9 +470,10 @@ func (s *Session) markInitialMessageRead() {
 //
 // Notes:
 //   - Value fields are copied as-is.
-//   - PingPayload is copied to avoid sharing the backing array.
+//   - PingPayload and PongPayload are copied to avoid sharing backing arrays.
 //
 // Version:
+//   - 2026-08-24: Copied PongPayload.
 //   - 2026-04-23: Added.
 func (o *SessionOption) Clone() *SessionOption {
 	// Guard.
@@ -470,6 +494,9 @@ func (o *SessionOption) Clone() *SessionOption {
 
 	if len(o.PingPayload) > 0 {
 		out.PingPayload = append([]byte(nil), o.PingPayload...)
+	}
+	if len(o.PongPayload) > 0 {
+		out.PongPayload = append([]byte(nil), o.PongPayload...)
 	}
 
 	return out

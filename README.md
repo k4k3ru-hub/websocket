@@ -47,6 +47,15 @@ func (h *Handler) HandleClose(sess websocket.SessionContext) {
 
 `HandleMessage`はSessionのread loopから呼び出されます。時間のかかる処理を同期的に実行すると、そのSessionの後続メッセージ読み取りが停止するため、必要に応じてアプリケーション側で処理を分離してください。
 
+application-level heartbeatを使用するサービスでは、`PingMessageType`、`PingPayload`、`PongPayload`を設定します。一致するText/BinaryのpongはSessionが内部で消費し、read deadlineを更新するため、`SessionHandler`には通知されません。
+
+```go
+option := websocket.DefaultSessionOption()
+option.PingMessageType = gorillaWebsocket.TextMessage
+option.PingPayload = []byte("ping")
+option.PongPayload = []byte("pong")
+```
+
 ## Server
 
 ```go
@@ -210,6 +219,7 @@ func (h *Handler) HandleClose(sess websocket.SessionContext) {
 | `InitialMessageReadWaitTimeout` | Client: 無効 / Server: 5秒 | 最初の非空Text/Binaryメッセージを待つ期限 |
 | `MaxMessageSize` | 256 KiB | 受信メッセージ上限 |
 | `SendQueueSize` | 256 | 非同期送信キュー容量 |
+| `PongPayload` | 未設定 | application-level pongとして内部消費するpayload |
 
 ## 並行処理とライフサイクル
 
