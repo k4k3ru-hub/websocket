@@ -231,6 +231,41 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Disconnect closes the current transport session without permanently closing the client.
+//
+// Notes:
+//   - Safe to call repeatedly.
+//   - A later Connect call can establish a new transport session.
+//   - Stored subscriptions are preserved. Call ResubscribeAll after reconnecting
+//     when the subscriptions remain active remotely.
+//
+// Returns:
+//   - Disconnect error.
+//
+// Version:
+//   - 2026-08-29: Added.
+func (c *Client) Disconnect() error {
+	if c == nil {
+		return fmt.Errorf("failed to disconnect websocket: receiver=null")
+	}
+
+	c.connectMu.Lock()
+	if c.closed.Load() {
+		c.connectMu.Unlock()
+		return fmt.Errorf("failed to disconnect websocket: client already closed")
+	}
+	c.sessionMu.Lock()
+	sess := c.session
+	c.session = nil
+	c.sessionMu.Unlock()
+	c.connectMu.Unlock()
+
+	if sess != nil {
+		sess.Close()
+	}
+	return nil
+}
+
 // Close websocket.
 //
 // Notes:
